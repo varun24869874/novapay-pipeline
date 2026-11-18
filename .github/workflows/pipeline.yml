@@ -72,11 +72,17 @@ jobs:
       - run: docker build -t novapay:dast .
       - run: docker run -d -p 8080:8080 novapay:dast
       - run: sleep 5
-      - uses: zaproxy/action-baseline@v0.12.0
+      - name: ZAP baseline scan
+        run: |
+          chmod 777 $(pwd)
+          docker run --rm --network host -v $(pwd):/zap/wrk:rw \
+            ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
+            -t http://localhost:8080 -r zap-report.html -I
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          target: http://localhost:8080
-          allow_issue_writing: false
-          fail_action: false
+          name: zap-report
+          path: zap-report.html
 
   compliance-gate:
     needs: [sast, dependency-scan, container-scan, integration-test, dast]
