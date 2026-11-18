@@ -50,3 +50,44 @@ jobs:
           aquasec/trivy:0.57.1 image
           --severity HIGH,CRITICAL --ignore-unfixed
           --exit-code 1 novapay:${{ github.sha }}
+
+  integration-test:
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t novapay:test .
+      - run: docker run -d -p 8080:8080 --name api novapay:test
+      - run: sleep 5
+      - name: Contract check
+        run: |
+          curl -sf localhost:8080/health | grep -q '"status"'
+          curl -sf localhost:8080/balance/ACC1 | grep -q '"balance"'
+
+  dast:
+    needs: integration-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t novapay:dast .
+      - run: docker run -d -p 8080:8080 novapay:dast
+      - run: sleep 5
+      - name: ZAP baseline scan
+        run: |
+          chmod 777 $(pwd)
+          docker run --rm --network host -v $(pwd):/zap/wrk:rw \
+            ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
+            -t http://localhost:8080 -r zap-report.html -I
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zap-report
+          path: zap-report.html
+
+  compliance-gate:
+    needs: [sast, dependency-scan, container-scan, integration-test, dast]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install checkov
+      - run: checkov -d . --framework dockerfile,github_actions
